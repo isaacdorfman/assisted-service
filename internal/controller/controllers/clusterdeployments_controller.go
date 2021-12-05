@@ -748,8 +748,8 @@ func (r *ClusterDeploymentsReconciler) updateIfNeeded(ctx context.Context,
 		if clusterInstall.Spec.IgnitionEndpoint.Url != "" {
 			ignitionEndpoint.URL = swag.String(clusterInstall.Spec.IgnitionEndpoint.Url)
 		}
-		if clusterInstall.Spec.IgnitionEndpoint.CaCertificate != "" {
-			ignitionEndpoint.CaCertificate = swag.String(clusterInstall.Spec.IgnitionEndpoint.CaCertificate)
+		if clusterInstall.Spec.IgnitionEndpoint.CaCertificateReference != "" {
+			ignitionEndpoint.CaCertificate = swag.String(clusterInstall.Spec.IgnitionEndpoint.CaCertificateReference)
 		}
 		params.IgnitionEndpoint = ignitionEndpoint
 		update = true
@@ -1014,7 +1014,7 @@ func (r *ClusterDeploymentsReconciler) createNewCluster(
 	if clusterInstall.Spec.IgnitionEndpoint != nil {
 		clusterParams.IgnitionEndpoint = &models.IgnitionEndpoint{
 			URL:           swag.String(clusterInstall.Spec.IgnitionEndpoint.Url),
-			CaCertificate: swag.String(clusterInstall.Spec.IgnitionEndpoint.CaCertificate),
+			CaCertificate: swag.String(clusterInstall.Spec.IgnitionEndpoint.CaCertificateReference),
 		}
 	}
 
