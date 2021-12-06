@@ -24,6 +24,8 @@ import (
 	"strings"
 	"time"
 
+	ignitionapi "github.com/coreos/ignition/v2/config/v3_1/types"
+
 	"github.com/go-openapi/strfmt"
 	"github.com/go-openapi/swag"
 	. "github.com/openshift/assisted-service/api/common"
@@ -884,9 +886,17 @@ func (r *AgentReconciler) updateIfNeeded(ctx context.Context, log logrus.FieldLo
 		}
 	}
 
-	if spec.IgnitionEndpointToken != "" && spec.IgnitionEndpointToken != internalHost.IgnitionEndpointToken {
-		hostUpdate = true
-		params.HostUpdateParams.IgnitionEndpointToken = &spec.IgnitionEndpointToken
+	if spec.IgnitionEndpointTokenReference != nil {
+		token, err := r.getIgnitionToken(ctx, log, agent)
+		if err != nil {
+			log.WithError(err).Errorf("Failed to get ignition token")
+			return err
+		}
+
+		if token != internalHost.IgnitionEndpointToken {
+			hostUpdate = true
+			params.HostUpdateParams.IgnitionEndpointToken = &token
+		}
 	}
 
 	if !hostUpdate {
@@ -903,6 +913,50 @@ func (r *AgentReconciler) updateIfNeeded(ctx context.Context, log logrus.FieldLo
 	log.Infof("Updated Agent spec %s %s", agent.Name, agent.Namespace)
 
 	return nil
+}
+
+func (r *AgentReconciler) getIgnitionToken(ctx context.Context, log logrus.FieldLogger, agent *aiv1beta1.Agent) (string, error) {
+	ignitionEndpointTokenReference := agent.Spec.IgnitionEndpointTokenReference
+
+	if ignitionEndpointTokenReference == nil {
+		log.Info("No IgnitionEndpointTokenReference set")
+		return "", errors.New("No IgnitionEndpointTokenReference set")
+	}
+
+	secret := &corev1.Secret{}
+	secretRef := types.NamespacedName{Namespace: ignitionEndpointTokenReference.Namespace, Name: ignitionEndpointTokenReference.Name}
+	if err := r.Get(ctx, secretRef, secret); err != nil {
+		log.WithError(err).Errorf("Failed to get user-data secret %s", ignitionEndpointTokenReference.Name)
+		return "", err
+	}
+
+	ignitionConfig := &ignitionapi.Config{}
+	if err := json.Unmarshal(secret.Data["value"], ignitionConfig); err != nil {
+		log.WithError(err).Errorf("Failed to unmarshal user-data secret %s", ignitionEndpointTokenReference.Name)
+		return "", err
+	}
+
+	if len(ignitionConfig.Ignition.Config.Merge) != 1 {
+		log.Errorf("expected one ignition source in secret %s but found %d", ignitionEndpointTokenReference.Name, len(ignitionConfig.Ignition.Config.Merge))
+		return "", errors.New("did not find one ignition source as expected")
+	}
+
+	ignitionSource := ignitionConfig.Ignition.Config.Merge[0]
+
+	for _, header := range ignitionSource.HTTPHeaders {
+		if header.Name != "Authorization" {
+			continue
+		}
+		expectedPrefix := "Bearer "
+		if !strings.HasPrefix(*header.Value, expectedPrefix) {
+			log.Errorf("did not find expected prefix for bearer token in user-data secret %s", ignitionEndpointTokenReference.Name)
+			return "", errors.New("did not find expected prefix for bearer token")
+		}
+		token := (*header.Value)[len(expectedPrefix):]
+		return token, nil
+	}
+
+	return "", errors.New("Couldn't find ignition token in ignitionSource.HTTPHeaders")
 }
 
 func (r *AgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
